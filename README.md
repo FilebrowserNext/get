@@ -39,4 +39,20 @@ filebrowser -r /path/to/your/files
 ```
 
 Then open your browser at:
-`http://127.0.0.1:8080`
+`http://127.0.0.1:8080` (or `http://<your-server-ip>:8080`)
+
+Default credentials: `admin` / `admin`.
+
+## Running in the Background
+
+* **Linux & macOS:**
+  ```bash
+  nohup filebrowser -r /path/to/your/files > filebrowser.log 2>&1 &
+  ```
+  Stop with: `pkill filebrowser`
+
+* **Windows (PowerShell):**
+  ```powershell
+  Start-Process filebrowser -ArgumentList "-r C:\path\to\your\files" -WindowStyle Hidden
+  ```
+  Stop with: `Stop-Process -Name filebrowser`

@@ -6,33 +6,36 @@
 #   Issues: https://github.com/FilebrowserNext/filebrowserNEXT/issues
 #   Requires: bash, mv, rm, tr, type, grep, sed, curl/wget, tar (or unzip on Windows)
 #
-#   This script installs File Browser Next to your path.
 #   Usage:
-#
 #       $ curl -fsSL https://raw.githubusercontent.com/FilebrowserNext/get/main/get.sh | bash
 #         or
 #       $ wget -qO- https://raw.githubusercontent.com/FilebrowserNext/get/main/get.sh | bash
 #
+#   Custom install directory:
+#       $ curl -fsSL https://raw.githubusercontent.com/FilebrowserNext/get/main/get.sh | INSTALL_PATH=$HOME/.local/bin bash
+#
 
 install_filemanager()
 {
-	trap 'echo -e "Aborted, error $? in command: $BASH_COMMAND"; trap ERR; return 1' ERR
 	filemanager_os="unsupported"
 	filemanager_arch="unknown"
-	install_path="/usr/local/bin"
+	install_path="${INSTALL_PATH:-/usr/local/bin}"
 
 	# Termux on Android compatibility
-	if [[ -n "$ANDROID_ROOT" && -n "$PREFIX" ]]; then
+	if [[ -n "$ANDROID_ROOT" && -n "$PREFIX" && -z "$INSTALL_PATH" ]]; then
 		install_path="$PREFIX/bin"
 	fi
 
-	# Fall back to /usr/bin if /usr/local/bin is missing
-	if [[ ! -d $install_path ]]; then
+	# Fall back to /usr/bin if /usr/local/bin does not exist
+	if [[ "$install_path" == "/usr/local/bin" && ! -d "/usr/local/bin" ]]; then
 		install_path="/usr/bin"
 	fi
 
 	# Detect sudo requirement
-	((EUID)) && [[ -z "$ANDROID_ROOT" ]] && sudo_cmd="sudo"
+	sudo_cmd=""
+	if ((EUID)) && [[ -z "$ANDROID_ROOT" ]]; then
+		sudo_cmd="sudo"
+	fi
 
 	#########################
 	# Architecture detection#
@@ -96,7 +99,10 @@ install_filemanager()
 	fi
 
 	rm -rf "$TMP_DIR/$filemanager_file"
-	${net_getter} "$filemanager_url" > "$TMP_DIR/$filemanager_file"
+	if ! ${net_getter} "$filemanager_url" > "$TMP_DIR/$filemanager_file"; then
+		echo "Aborted, failed to download $filemanager_url"
+		return 8
+	fi
 
 	echo "Extracting..."
 	case "$filemanager_file" in
@@ -113,23 +119,59 @@ install_filemanager()
 
 	chmod +x "$TMP_DIR/$filemanager_bin"
 
-	echo "Installing filebrowser in $install_path (may require sudo password)..."
-	$sudo_cmd mv "$TMP_DIR/$filemanager_bin" "$install_path/$filemanager_bin"
+	########################
+	# Installation & Path  #
+	########################
 
-	if setcap_cmd=$(PATH+=$PATH:/sbin type -p setcap); then
-		$sudo_cmd $setcap_cmd cap_net_bind_service=+ep "$install_path/$filemanager_bin" 2>/dev/null || true
+	installed=false
+	mkdir -p "$install_path" 2>/dev/null || true
+
+	# Check direct write access
+	if [ -w "$install_path" ]; then
+		echo "Installing filebrowser to $install_path..."
+		mv "$TMP_DIR/$filemanager_bin" "$install_path/$filemanager_bin"
+		installed=true
+	elif [[ -n "$sudo_cmd" ]]; then
+		echo "Installing filebrowser to $install_path (requires sudo privileges)..."
+		if $sudo_cmd mv "$TMP_DIR/$filemanager_bin" "$install_path/$filemanager_bin"; then
+			installed=true
+			if setcap_cmd=$(PATH+=$PATH:/sbin type -p setcap); then
+				$sudo_cmd $setcap_cmd cap_net_bind_service=+ep "$install_path/$filemanager_bin" 2>/dev/null || true
+			fi
+		else
+			echo "Privileged installation failed or was skipped."
+		fi
 	fi
+
+	# Fallback to user directory (~/.local/bin) if sudo was refused/failed
+	if [ "$installed" = false ]; then
+		user_bin="$HOME/.local/bin"
+		mkdir -p "$user_bin" 2>/dev/null || true
+		if [ -d "$user_bin" ] && [ -w "$user_bin" ]; then
+			echo "Falling back to user bin directory: $user_bin (no sudo needed)..."
+			mv "$TMP_DIR/$filemanager_bin" "$user_bin/$filemanager_bin"
+			install_path="$user_bin"
+			installed=true
+		else
+			echo "Falling back to current directory: $(pwd)..."
+			mv "$TMP_DIR/$filemanager_bin" "./$filemanager_bin"
+			install_path="$(pwd)"
+			installed=true
+		fi
+	fi
+
 	rm -f "$TMP_DIR/$filemanager_file"
 
-	if type -p $filemanager_bin >/dev/null 2>&1; then
-		echo "File Browser Next installed successfully."
+	# Check PATH
+	if type -p "$filemanager_bin" >/dev/null 2>&1; then
+		echo "File Browser Next successfully installed in $install_path"
 		echo "Run '$filemanager_bin -r /path/to/files' to start."
-		trap ERR
 		return 0
 	else
-		echo "Something went wrong, $filemanager_bin is not in PATH."
-		trap ERR
-		return 1
+		echo "File Browser Next installed in: $install_path/$filemanager_bin"
+		echo "Note: If '$install_path' is not in your PATH, add it or run directly:"
+		echo "  $install_path/$filemanager_bin -r /path/to/files"
+		return 0
 	fi
 }
 
